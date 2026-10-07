@@ -3268,6 +3268,55 @@ inline void testAudioFileRoundTrip (choc::test::TestProgress& progress, choc::au
     CHOC_CATCH_UNEXPECTED_EXCEPTION
 }
 
+inline std::string createTestFile (choc::audio::AudioFileFormat& format, choc::audio::BitDepth bitDepth,
+                                   uint32_t numChannels, uint32_t numFrames)
+{
+    auto out = std::make_shared<std::ostringstream> (std::ios::binary);
+
+    choc::audio::AudioFileProperties props;
+    props.bitDepth = bitDepth;
+    props.sampleRate = 44100.0;
+    props.numChannels = numChannels;
+
+    auto source = choc::buffer::ChannelArrayBuffer<float> (numChannels, numFrames);
+
+    for (uint32_t i = 0; i < numChannels; ++i)
+        choc::oscillator::render<choc::oscillator::Sine<float>> (source.getChannel (i), 440.0 + 100.0 * i, props.sampleRate);
+
+    {
+        auto writer = format.createWriter (out, props);
+        writer->appendFrames (source);
+    }
+
+    return out->str();
+}
+
+inline std::string withWAVBlockAlign (std::string wav, uint16_t blockAlign)
+{
+    // nBlockAlign follows the fmt chunk's id, size, format tag, channels, sample rate and byte rate
+    auto blockAlignPos = wav.find ("fmt ") + 20;
+    wav[blockAlignPos]     = static_cast<char> (blockAlign & 0xff);
+    wav[blockAlignPos + 1] = static_cast<char> (blockAlign >> 8);
+    return wav;
+}
+
+template <typename FileFormat>
+inline std::unique_ptr<choc::audio::AudioFileReader> createTestReader (std::string data)
+{
+    return FileFormat().createReader (std::make_shared<std::istringstream> (std::move (data)));
+}
+
+// A decoder that never returns would hang the whole test run, so the work runs on a detached
+// thread and is abandoned if it hasn't finished in time
+template <typename Function>
+inline bool finishesWithin (std::chrono::milliseconds timeout, Function&& fn)
+{
+    auto task = std::make_shared<std::packaged_task<void()>> (std::forward<Function> (fn));
+    auto result = task->get_future();
+    std::thread ([task] { (*task)(); }).detach();
+    return result.wait_for (timeout) == std::future_status::ready;
+}
+
 inline void testAudioFileFormat (choc::test::TestProgress& progress)
 {
     CHOC_CATEGORY (AudioFileFormat);
@@ -3340,6 +3389,55 @@ inline void testAudioFileFormat (choc::test::TestProgress& progress)
                     useDouble = ! useDouble;
                 }
             }
+        }
+    }
+
+    {
+        CHOC_TEST (WAVBlockAlignNarrowerThanAFrame)
+
+        choc::audio::WAVAudioFileFormat<true> wavFormat;
+        // Each read decodes numChannels * sampleStride bytes per frame, so a block align smaller
+        // than that reads past the end of the reader's raw data buffer
+        auto wav = createTestFile (wavFormat, choc::audio::BitDepth::float32, 64, 1024);
+        CHOC_EXPECT_TRUE (createTestReader<choc::audio::WAVAudioFileFormat<false>> (wav) != nullptr);
+        CHOC_EXPECT_TRUE (createTestReader<choc::audio::WAVAudioFileFormat<false>> (withWAVBlockAlign (wav, 4)) == nullptr);
+    }
+
+    {
+        CHOC_TEST (WAVBlockAlignWiderThanTheReadBuffer)
+
+        choc::audio::WAVAudioFileFormat<true> wavFormat;
+        // A frame wider than the raw data buffer means zero frames per read, so readFrames never advances
+        auto wav = withWAVBlockAlign (createTestFile (wavFormat, choc::audio::BitDepth::int16, 1, 1024), 4096);
+        CHOC_EXPECT_TRUE (createTestReader<choc::audio::WAVAudioFileFormat<false>> (wav) == nullptr);
+    }
+
+    {
+        CHOC_TEST (FLACThatEndsEarly)
+
+        choc::audio::FLACAudioFileFormat<true> flacFormat;
+        auto flac = createTestFile (flacFormat, choc::audio::BitDepth::int16, 1, 44100);
+
+        for (auto truncated : { flac.substr (0, flac.length() / 2), std::string ("fLaC") })
+        {
+            auto readAllFrames = std::make_shared<std::atomic<bool>> (true);
+
+            CHOC_EXPECT_TRUE (finishesWithin (std::chrono::seconds (5), [truncated, readAllFrames]
+            {
+                auto reader = createTestReader<choc::audio::FLACAudioFileFormat<false>> (truncated);
+
+                if (reader == nullptr)
+                {
+                    *readAllFrames = false;
+                    return;
+                }
+
+                auto buffer = choc::buffer::ChannelArrayBuffer<float> (reader->getProperties().numChannels,
+                                                                       static_cast<choc::buffer::FrameCount> (reader->getProperties().numFrames));
+                *readAllFrames = reader->readFrames (0, buffer.getView());
+            }));
+
+            CHOC_EXPECT_FALSE (readAllFrames->load());
         }
     }
 }
