@@ -140,7 +140,6 @@ struct WAVAudioFileFormat<supportWriting>::Implementation
 
                 seek (dataChunk.start + frameIndex * frameStride);
 
-                const uint32_t rawDataSize = 2048;
                 char rawData[rawDataSize];
                 const uint32_t rawDataFrames = rawDataSize / frameStride;
 
@@ -288,6 +287,11 @@ struct WAVAudioFileFormat<supportWriting>::Implementation
             }
 
             if (properties.bitDepth == BitDepth::unknown)
+                throwFormatException();
+
+            // The block align comes straight from the header, but each read decodes
+            // numChannels * sampleStride bytes per frame out of a rawDataSize buffer.
+            if (frameStride < properties.numChannels * sampleStride || frameStride > rawDataSize)
                 throwFormatException();
         }
 
@@ -491,6 +495,7 @@ struct WAVAudioFileFormat<supportWriting>::Implementation
         uint64_t streamEndPosition = 0;
         uint32_t frameStride = 0, sampleStride = 0;
         bool containsOggVorbisData = false;
+        static constexpr uint32_t rawDataSize = 2048;
 
         template <typename Type>
         void seek (Type pos)            { stream->seekg (static_cast<std::streamoff> (pos)); }
