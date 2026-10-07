@@ -17627,13 +17627,16 @@ struct FLACAudioFileFormat<supportWriting>::Implementation
             }
             catch (...) {}
 
-            if (s.eof())
-            {
-                s.clear();
-                *bytes = (size_t) s.gcount();
-            }
+            if (! s.eof())
+                return flac::FLAC__STREAM_DECODER_READ_STATUS_ABORT;
 
-            return flac::FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
+            // libFLAC asks again for as long as it is told CONTINUE, so a read that
+            // hits the end with nothing must say so or the decoder never returns.
+            s.clear();
+            *bytes = (size_t) s.gcount();
+
+            return *bytes == 0 ? flac::FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM
+                               : flac::FLAC__STREAM_DECODER_READ_STATUS_CONTINUE;
         }
 
         static flac::FLAC__StreamDecoderSeekStatus seekCallback (const flac::FLAC__StreamDecoder*, flac::FLAC__uint64 absolute_byte_offset, void* context)
