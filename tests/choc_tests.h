@@ -3297,6 +3297,26 @@ inline void testAudioFileFormat (choc::test::TestProgress& progress)
             CHOC_EXPECT_FALSE (readAllFrames->load());
         }
     }
+
+    {
+        CHOC_TEST (FLACFramesWithFewerChannelsThanTheStreamInfo)
+
+        choc::audio::FLACAudioFileFormat<true> flacFormat;
+        auto flac = createTestFile (flacFormat, choc::audio::BitDepth::int16, 1, 4096);
+
+        // The STREAMINFO block follows "fLaC" and its 4-byte header; 100 bits in, its
+        // channel count minus one fills bits 1-3 of byte 12. Claiming 8 channels leaves
+        // the mono frames below it handing the reader 7 channels it doesn't have
+        constexpr size_t channelCountByte = 4 + 4 + 12;
+        flac[channelCountByte] = static_cast<char> ((flac[channelCountByte] & 0xf1) | (7 << 1));
+
+        auto reader = createTestReader<choc::audio::FLACAudioFileFormat<false>> (flac);
+        CHOC_EXPECT_TRUE (reader != nullptr);
+        CHOC_EXPECT_EQ (reader->getProperties().numChannels, 8u);
+
+        auto buffer = choc::buffer::ChannelArrayBuffer<float> (8, 4096);
+        CHOC_EXPECT_FALSE (reader->readFrames (0, buffer.getView()));
+    }
 }
 
 inline void testTimers (choc::test::TestProgress& progress)

@@ -17690,7 +17690,14 @@ struct FLACAudioFileFormat<supportWriting>::Implementation
 
         static flac::FLAC__StreamDecoderWriteStatus writeCallback (const flac::FLAC__StreamDecoder*, const flac::FLAC__Frame* frame, const flac::FLAC__int32* const* buffer, void* context)
         {
-            static_cast<FLACReader*> (context)->handleFrames (buffer, static_cast<uint32_t> (frame->header.blocksize));
+            auto& reader = *static_cast<FLACReader*> (context);
+
+            // libFLAC hands over one buffer per channel the frame carries, which a broken
+            // file can make fewer than the STREAMINFO channel count the cache copies
+            if (! reader.isDummyLengthScan && frame->header.channels != reader.properties.numChannels)
+                return flac::FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+
+            reader.handleFrames (buffer, static_cast<uint32_t> (frame->header.blocksize));
             return flac::FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
         }
 
