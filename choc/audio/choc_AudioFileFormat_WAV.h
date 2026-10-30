@@ -306,8 +306,9 @@ struct WAVAudioFileFormat<supportWriting>::Implementation
 
         void readChunk_data (ChunkRange chunkRange, bool isRF64)
         {
+            // ds64's 64-bit data length is not clamped to the file the way a chunk's own is
             if (isRF64 && dataChunk.length != 0)
-                chunkRange.length = dataChunk.length;
+                chunkRange.length = std::min (dataChunk.length, streamEndPosition - chunkRange.start);
 
             dataChunk = chunkRange;
             properties.numFrames = frameStride > 0 ? (dataChunk.length / frameStride) : 0;
@@ -316,7 +317,7 @@ struct WAVAudioFileFormat<supportWriting>::Implementation
         void readMetadata_Unknown (std::string type, ChunkRange chunkRange)
         {
             addMetadata (choc::json::create ("type", type,
-                                             "content", readIntoBase64 (chunkRange.getEnd() - getPosition())));
+                                             "content", readIntoBase64 (getBytesLeftInChunk (chunkRange))));
         }
 
         void readMetadata_BWAV (std::string type, ChunkRange chunkRange)
@@ -460,7 +461,7 @@ struct WAVAudioFileFormat<supportWriting>::Implementation
             }
             else
             {
-                list.setMember ("data", readIntoBase64 (chunkRange.getEnd() - getPosition()));
+                list.setMember ("data", readIntoBase64 (getBytesLeftInChunk (chunkRange)));
             }
 
             addMetadata (std::move (list));
@@ -555,9 +556,17 @@ struct WAVAudioFileFormat<supportWriting>::Implementation
             return nullChar != std::string::npos ? s.substr (0, nullChar) : s;
         }
 
+        // A chunk shorter than the fields read from it leaves the position past its
+        // end, where end - position would wrap to a size of gigabytes
+        uint64_t getBytesLeftInChunk (ChunkRange range) const
+        {
+            auto pos = getPosition();
+            return pos < range.getEnd() ? range.getEnd() - pos : 0;
+        }
+
         std::string readStringToEndOfChunk (ChunkRange range)
         {
-            return readString (static_cast<uint32_t> (range.getEnd() - getPosition()));
+            return readString (static_cast<uint32_t> (getBytesLeftInChunk (range)));
         }
 
         template <typename Size>

@@ -3299,6 +3299,25 @@ inline void testAudioFileFormat (choc::test::TestProgress& progress)
     }
 
     {
+        CHOC_TEST (WAVBextChunkShorterThanItsFields)
+
+        choc::audio::WAVAudioFileFormat<true> wavFormat;
+        auto wav = createTestFile (wavFormat, choc::audio::BitDepth::int16, 1, 1024);
+
+        // The broadcast extension's fixed fields run past a 4-byte chunk, after which
+        // the length of its coding history wrapped to gigabytes
+        std::string bext = "bext";
+        bext += std::string ("\x04\0\0\0abcd", 8);
+        wav.insert (12, bext);
+
+        auto riffSize = static_cast<uint32_t> (wav.size() - 8);
+        for (int i = 0; i < 4; ++i)
+            wav[4 + static_cast<size_t> (i)] = static_cast<char> ((riffSize >> (8 * i)) & 0xff);
+
+        CHOC_EXPECT_TRUE (createTestReader<choc::audio::WAVAudioFileFormat<false>> (wav) != nullptr);
+    }
+
+    {
         CHOC_TEST (WAVSecondFmtChunkDescribingSmallerSamples)
 
         choc::audio::WAVAudioFileFormat<true> wavFormat;
