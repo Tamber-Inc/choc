@@ -236,6 +236,10 @@ struct WAVAudioFileFormat<supportWriting>::Implementation
 
         void readChunk_fmt (ChunkRange chunkRange)
         {
+            // A file can hold more than one fmt chunk, and one in a format this reader
+            // doesn't decode must not keep the sample type of the one before it
+            properties.bitDepth = BitDepth::unknown;
+
             auto format = readInt<uint16_t>();
             properties.numChannels = readInt<uint16_t>();
             auto sampleRate = readInt<uint32_t>();
@@ -292,6 +296,11 @@ struct WAVAudioFileFormat<supportWriting>::Implementation
             // The block align comes straight from the header, but each read decodes
             // numChannels * sampleStride bytes per frame out of a rawDataSize buffer.
             if (frameStride < properties.numChannels * sampleStride || frameStride > rawDataSize)
+                throwFormatException();
+
+            // WAVE_FORMAT_EXTENSIBLE takes the sample type from its own bit count, which
+            // must still fit in the sample size the strides were checked against
+            if (sampleStride < getBytesPerSample (properties.bitDepth))
                 throwFormatException();
         }
 

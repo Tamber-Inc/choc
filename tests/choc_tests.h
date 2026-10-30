@@ -3299,6 +3299,44 @@ inline void testAudioFileFormat (choc::test::TestProgress& progress)
     }
 
     {
+        CHOC_TEST (WAVSecondFmtChunkDescribingSmallerSamples)
+
+        choc::audio::WAVAudioFileFormat<true> wavFormat;
+        auto wav = createTestFile (wavFormat, choc::audio::BitDepth::float64, 2, 1024);
+
+        // A second fmt chunk, in a format the reader doesn't decode, describing 16-bit
+        // stereo: its block align and sample size replaced the first chunk's, but the
+        // float64 sample type stayed, so each read decoded 8-byte samples out of a
+        // buffer filled for 2-byte ones
+        auto appendInt = [&] (uint32_t value, int numBytes)
+        {
+            for (int i = 0; i < numBytes; ++i)
+                wav += static_cast<char> ((value >> (8 * i)) & 0xff);
+        };
+
+        wav += "fmt ";
+        appendInt (16, 4);
+        appendInt (0x6750, 2); // WAVE_FORMAT_OGG_VORBIS_MODE_2
+        appendInt (2, 2);
+        appendInt (44100, 4);
+        appendInt (44100 * 4, 4);
+        appendInt (4, 2);
+        appendInt (16, 2);
+
+        auto riffSize = static_cast<uint32_t> (wav.size() - 8);
+        for (int i = 0; i < 4; ++i)
+            wav[4 + static_cast<size_t> (i)] = static_cast<char> ((riffSize >> (8 * i)) & 0xff);
+
+        auto reader = createTestReader<choc::audio::WAVAudioFileFormat<false>> (wav);
+
+        if (reader != nullptr)
+        {
+            auto buffer = choc::buffer::ChannelArrayBuffer<float> (2, 1024);
+            CHOC_EXPECT_FALSE (reader->readFrames (0, buffer.getView()));
+        }
+    }
+
+    {
         CHOC_TEST (FLACFramesWithFewerChannelsThanTheStreamInfo)
 
         choc::audio::FLACAudioFileFormat<true> flacFormat;
